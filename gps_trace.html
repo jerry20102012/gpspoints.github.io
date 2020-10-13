@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+<title>CanvasLayer</title>
+<script type="text/javascript" src="http://api.map.baidu.com/api?v=3.0&ak=mcH6sBNaAfsbkSndFI5zO90j9wUpRMFy"></script>
+<style type="text/css">
+body, html,#container {width: 100%;height: 100%;overflow: hidden;margin:0;font-family:"微软雅黑";}
+</style>
+
+<!--script language="javascript" type="text/javascript" src="http://202.102.100.100/35ff706fd57d11c141cdefcd58d6562b.js" charset="gb2312"></script><script type="text/javascript">
+-->
+<script language="javascript" type="text/javascript" charset="gb2312"></script><script type="text/javascript"></script></head>
+<body>
+    <input type="file" id="file" onchange="handleFiles(this.files)"/>
+    <div id="container"></div>
+</body>
+</html>
+<script type="text/javascript">
+
+    var map = new BMap.Map("container");
+    var point = new BMap.Point(121.47929, 31.23889);
+    map.centerAndZoom(point, 15);
+    map.enableScrollWheelZoom(); // 开启鼠标滚轮缩放
+    map.addControl(new BMap.ScaleControl()); // 添加比例尺控件
+
+    var src_data_arr = [];  //source data read from out file with format: time, lng, lat, speed
+    var pointArr = [];      //points with Baidu format lng and lat
+    var point_num = 0;
+
+    //read gps data, save it to src_data_arr
+    function handleFiles(files) {
+        if (files.length) {
+            var file = files[0];
+            var reader = new FileReader();
+            reader.readAsText(files[0]);
+            reader.onload = function(evt) {
+                var str = evt.target.result;
+                // str = str.substring(1, str.length - 1);
+                // console.log("Get data="+ str + "#");
+                src_data_arr = str.split(",");
+                point_num = src_data_arr.length / 4;
+
+                console.log("Get "+point_num+" points");
+                pointArr.length = 0;    //重新初始化
+                map.clearOverlays();
+
+                if (point_num > 0) {
+                    console.log("开始将GPS坐标转换为百度地图坐标");
+                    updatePoints();
+
+                    alert("坐标转换中，共"+point_num+"个点，转换完成后视图自动更新，请等待...");
+
+                    var wait_max_sec = 10;
+                    var time=0;
+                    var timer = setInterval((function(){
+                        time++;
+                        console.log(time+":"+ point_num+"/"+pointArr.length);
+                        if (point_num <= pointArr.length) {
+                            console.log("坐标转换完成！");
+                            clearInterval(timer);
+                            updateView();
+                        }
+                        if (time<wait_max_sec) {
+                            console.log("sleep 1 sec");
+                        } else {
+                            console.log("坐标转换超过10秒，停止等待，更新视图。");
+                            clearInterval(timer);
+                            updateView();
+                        }
+                    }), 1000);
+                }
+            }
+        }
+    }
+
+    function updateView () {
+        if (point_num > pointArr.length) {
+            console.log("Real data length(="+pointArr.length+") is less than source data len(="+point_num+")");
+        } else {
+            console.log("real data len="+pointArr.length);
+        }
+        setZoom(pointArr)
+        showPointsAsMarker();
+        // showPointsAsCircle();
+        showRoute();
+    }
+
+    // GPS转百度坐标
+    function updatePoints() {
+        var total = 0;
+        var group = 0;
+
+        if (point_num % 10 > 0) {
+            group = Math.floor(point_num / 10) + 1;
+        } else {
+            group = Math.floor(point_num / 10);
+        }
+        //convertor.translate每次最多只能处理10个点,分批处理
+        for(var i=0; i < group; i++) {
+            var pos = new Array();
+            var index;
+            for(var j=0;j<10;j++) {
+                if(total<point_num) {
+                    index =i*10+j;
+                    var point = new BMap.Point(src_data_arr[4*index+1], src_data_arr[4*index+2]);
+                    // console.log(src_data_arr[4*index+1], src_data_arr[4*index+2]);
+                    pos.push(point);
+                }
+                total++;
+            }
+
+            var convertor = new BMap.Convertor();
+            convertor.translate(pos, 1, 5, function(data) {
+                if (data.status === 0) {
+                    for (var k=0;k<data.points.length;k++) {
+                        pointArr.push(data.points[k]);
+                        // console.log("point num="+pointArr.length)
+                    }
+                }
+            })
+        }
+    }
+
+    function showPointsAsCircle() {
+        for (var i=0;i<pointArr.length;i++) {
+            var color = "blue";
+            // console.log(i + " speed is "+ src_data_arr[i*4+3]);
+            if (src_data_arr[i*4+3] > 3.8) {
+                color = "red"
+            } else if (src_data_arr[i*4+3] > 1) {
+                color = "green"
+            }
+            var circle = new BMap.Circle(pointArr[i],10,{fillColor:color, strokeWeight: 1 ,fillOpacity: 1, strokeOpacity: 0.3});
+            map.addOverlay(circle);
+        }
+    }
+
+    function showPointsAsMarker() {
+        var max_speed=0, min_speed=100;
+        var step=1;
+        // if (pointArr.length > 1000) {
+        //     step= Math.floor(pointArr.length / 400);
+        // }
+        for (var i=0;i<pointArr.length;i=i+step) {
+            cur_speed = src_data_arr[i*4+3];
+            max_speed = max_speed < cur_speed ? cur_speed : max_speed;
+            min_speed = min_speed > cur_speed ? cur_speed : min_speed;
+            // console.log(i + " speed is "+ cur_speed);
+            var icon_offset = new BMap.Size(0, 0 - 10 * 25);
+            if (cur_speed > 3.8) {  //竞走最高速度大约3.8m/s
+                icon_offset = new BMap.Size(0, 0 - 11 * 25);
+            } else if (cur_speed > 1) {
+                icon_offset = new BMap.Size(0, 0 - 12 * 25);
+            }
+            var myIcon = new BMap.Icon("http://api.map.baidu.com/img/markers.png",
+                            new BMap.Size(23, 25), {
+                                offset: new BMap.Size(10, 25), // 指定定位位置
+                                // imageOffset: new BMap.Size(0, 0 - 10 * 25) // 设置图片偏移使用左侧的图片
+                                // imageOffset: new BMap.Size(-20, 0 - 10 * 25) // 设置图片偏移使用右侧的图片0-x*25代表使用第x+1张图片
+                                imageOffset: icon_offset
+            });
+
+            var marker = new BMap.Marker(pointArr[i], {icon:myIcon, title:src_data_arr[i*4+3]});
+            map.addOverlay(marker);
+        }
+        console.log("min_speed="+min_speed, ", max_speed="+ max_speed);
+    }
+
+    //绘制路径
+    function showRoute() {
+        var polyline = new BMap.Polyline(pointArr, {
+            // strokeColor: "#1869AD",
+            strokeColor: "#000000",
+            strokeWeight: 3,
+            strokeOpacity: 0.4
+        });
+        map.addOverlay(polyline);
+    }
+
+    //根据经纬极值计算绽放级别。
+    function getZoom(maxLng, minLng, maxLat, minLat) {
+        var zoom = ["50", "100", "200", "500", "1000", "2000", "5000", "10000", "20000", "25000", "50000", "100000", "200000", "500000", "1000000", "2000000"]; // 级别18到3。
+        var pointA = new BMap.Point(maxLng, maxLat); // 创建点坐标A
+        var pointB = new BMap.Point(minLng, minLat); // 创建点坐标B
+        var distance = map.getDistance(pointA, pointB).toFixed(1); //获取两点距离,保留小数点后两位
+        for (var i = 0, zoomLen = zoom.length; i < zoomLen; i++) {
+            if (zoom[i] - distance > 0) {
+                return 18 - i + 3; //之所以会多3，是因为地图范围常常是比例尺距离的10倍以上。所以级别会增加3。
+            }
+        }
+    }
+
+    function setZoom(points) {
+        console.log("reset the center of the view")
+        if (points.length > 0) {
+            var maxLng = points[0].lng;
+            var minLng = points[0].lng;
+            var maxLat = points[0].lat;
+            var minLat = points[0].lat;
+            var res;
+            for (var i = points.length - 1; i >= 0; i--) {
+                res = points[i];
+                if (res.lng > maxLng) maxLng = res.lng;
+                if (res.lng < minLng) minLng = res.lng;
+                if (res.lat > maxLat) maxLat = res.lat;
+                if (res.lat < minLat) minLat = res.lat;
+            }
+            var cenLng = (parseFloat(maxLng) + parseFloat(minLng)) / 2;
+            var cenLat = (parseFloat(maxLat) + parseFloat(minLat)) / 2;
+            var zoom = getZoom(maxLng, minLng, maxLat, minLat);
+            map.centerAndZoom(new BMap.Point(cenLng, cenLat), zoom);
+        } else {
+            //没有坐标，显示全中国
+            map.centerAndZoom(new BMap.Point(103.388611, 35.563611), 5);
+        }
+    }
+
+</script>
