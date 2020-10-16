@@ -18,15 +18,54 @@ body, html,#container {width: 100%;height: 100%;overflow: hidden;margin:0;font-f
 </html>
 <script type="text/javascript">
 
+    // control parameters
+    var show_marker = true;
+    var show_circle = false;
+    var circle_radius = 2;
+    var show_lines = false;
+
+    var high_speed_low_limit = 4;  //竞走最高速度大约3.8m/s
+    var slow_speed_low_limit = 0.5;
+
     var map = new BMap.Map("container");
     var point = new BMap.Point(121.47929, 31.23889);
     map.centerAndZoom(point, 15);
     map.enableScrollWheelZoom(); // 开启鼠标滚轮缩放
     map.addControl(new BMap.ScaleControl()); // 添加比例尺控件
+    // 添加带有定位的导航控件
+    var navigationControl = new BMap.NavigationControl({
+    anchor: BMAP_ANCHOR_TOP_LEFT,   // 靠左上角位置
+    type: BMAP_NAVIGATION_CONTROL_LARGE,    // LARGE类型
+    enableGeolocation: true // 启用显示定位
+    });
+    map.addControl(navigationControl);
 
     var src_data_arr = [];  //source data read from out file with format: time, lng, lat, speed
     var pointArr = [];      //points with Baidu format lng and lat
     var point_num = 0;
+    var max_speed=0, min_speed=100;
+    var mid_speed_num=0, high_speed_num=0;
+    var max_speed_
+
+    function updateView () {
+        if (point_num > pointArr.length) {
+            console.log("Real data length(="+pointArr.length+") is less than source data len(="+point_num+")");
+        } else {
+            console.log("real data len="+pointArr.length);
+        }
+        setZoom(pointArr)
+        if (show_marker) {
+            showPointsAsMarker();
+        }
+        if (show_circle) {
+            showPointsAsCircle();
+        }
+        if (show_lines) {
+            showRoute();
+        }
+
+        // alert("更新结束: min_speed="+min_speed+", max_speed="+ max_speed);
+    }
 
     //read gps data, save it to src_data_arr
     function handleFiles(files) {
@@ -43,13 +82,14 @@ body, html,#container {width: 100%;height: 100%;overflow: hidden;margin:0;font-f
 
                 console.log("Get "+point_num+" points");
                 pointArr.length = 0;    //重新初始化
+                max_speed=0, min_speed=100;
                 map.clearOverlays();
 
                 if (point_num > 0) {
                     console.log("开始将GPS坐标转换为百度地图坐标");
                     updatePoints();
 
-                    alert("坐标转换中，共"+point_num+"个点，转换完成后视图自动更新，请等待...");
+                    // alert("坐标转换中，共"+point_num+"个点，转换完成后视图自动更新，请等待...");
 
                     var wait_max_sec = 10;
                     var time=0;
@@ -72,18 +112,6 @@ body, html,#container {width: 100%;height: 100%;overflow: hidden;margin:0;font-f
                 }
             }
         }
-    }
-
-    function updateView () {
-        if (point_num > pointArr.length) {
-            console.log("Real data length(="+pointArr.length+") is less than source data len(="+point_num+")");
-        } else {
-            console.log("real data len="+pointArr.length);
-        }
-        setZoom(pointArr)
-        showPointsAsMarker();
-        // showPointsAsCircle();
-        showRoute();
     }
 
     // GPS转百度坐标
@@ -126,18 +154,32 @@ body, html,#container {width: 100%;height: 100%;overflow: hidden;margin:0;font-f
         for (var i=0;i<pointArr.length;i++) {
             var color = "blue";
             // console.log(i + " speed is "+ src_data_arr[i*4+3]);
-            if (src_data_arr[i*4+3] > 3.8) {
+            cur_speed = src_data_arr[i*4+3];
+            max_speed = max_speed < cur_speed ? cur_speed : max_speed;
+            min_speed = min_speed > cur_speed ? cur_speed : min_speed;
+            if (cur_speed > high_speed_low_limit) {
                 color = "red"
-            } else if (src_data_arr[i*4+3] > 1) {
+            } else if (cur_speed > slow_speed_low_limit) {
                 color = "green"
             }
-            var circle = new BMap.Circle(pointArr[i],10,{fillColor:color, strokeWeight: 1 ,fillOpacity: 1, strokeOpacity: 0.3});
+            var circle = new BMap.Circle(pointArr[i],circle_radius,{fillColor:color, strokeWeight: 1 , fillOpacity: 1, strokeOpacity: 0.3});
+            var label = new BMap.Label(src_data_arr[i*4+3]+"@"+src_data_arr[i*4], {position: pointArr[i]});
+
+            circle.addEventListener('mousemove', function(e){
+                // alert(src_data_arr[i*4+3]+"@"+src_data_arr[i*4]);
+                map.addOverlay(label);
+            });
             map.addOverlay(circle);
+            if (i==0) {
+                var marker = new BMap.Marker(pointArr[i]);
+                map.addOverlay(marker);
+                marker.setAnimation(BMAP_ANIMATION_BOUNCE);//在起点设置跳动的动画
+            }
         }
+        console.log("min_speed="+min_speed, ", max_speed="+ max_speed);
     }
 
     function showPointsAsMarker() {
-        var max_speed=0, min_speed=100;
         var step=1;
         // if (pointArr.length > 1000) {
         //     step= Math.floor(pointArr.length / 400);
@@ -148,10 +190,12 @@ body, html,#container {width: 100%;height: 100%;overflow: hidden;margin:0;font-f
             min_speed = min_speed > cur_speed ? cur_speed : min_speed;
             // console.log(i + " speed is "+ cur_speed);
             var icon_offset = new BMap.Size(0, 0 - 10 * 25);
-            if (cur_speed > 3.8) {  //竞走最高速度大约3.8m/s
+            if (cur_speed > high_speed_low_limit) {  //竞走最高速度大约3.8m/s
                 icon_offset = new BMap.Size(0, 0 - 11 * 25);
-            } else if (cur_speed > 1) {
+                high_speed_num++;
+            } else if (cur_speed > slow_speed_low_limit) {
                 icon_offset = new BMap.Size(0, 0 - 12 * 25);
+                mid_speed_num++;
             }
             var myIcon = new BMap.Icon("http://api.map.baidu.com/img/markers.png",
                             new BMap.Size(23, 25), {
@@ -161,10 +205,17 @@ body, html,#container {width: 100%;height: 100%;overflow: hidden;margin:0;font-f
                                 imageOffset: icon_offset
             });
 
-            var marker = new BMap.Marker(pointArr[i], {icon:myIcon, title:src_data_arr[i*4+3]});
+            // var marker = new BMap.Marker(pointArr[i], {icon:myIcon, title:src_data_arr[i*4+3]});
+            var marker = new BMap.Marker(pointArr[i], {icon:myIcon, title:src_data_arr[i*4+3]+"@"+src_data_arr[i*4]});
             map.addOverlay(marker);
+            if (i==0) {
+                marker.setAnimation(BMAP_ANIMATION_BOUNCE);//在起点设置跳动的动画
+            }
         }
         console.log("min_speed="+min_speed, ", max_speed="+ max_speed);
+        console.log("low="+(pointArr.length-mid_speed_num-high_speed_num)/pointArr.length);
+        console.log("mid="+mid_speed_num/pointArr.length);
+        console.log("high="+high_speed_num/pointArr.length);
     }
 
     //绘制路径
